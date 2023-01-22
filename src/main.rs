@@ -1,9 +1,9 @@
 use bincode::{self, deserialize, serialize};
 use clap::Parser;
+use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use lz4_flex::{compress_prepend_size, decompress_size_prepended};
-
+use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -44,7 +44,7 @@ fn main() {
         archive(
             args.input_files.expect("Input files required"),
             &args.archive_file,
-            args.compress
+            args.compress,
         )
     }
 }
@@ -66,31 +66,47 @@ fn extract(archive_file: &str) {
         let file_info: FileInfo = deserialize(file_info).unwrap();
         data.drain(0..len);
 
+        let path = std::path::Path::new(&file_info.file_name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
         // get data and write to file
         fs::write(file_info.file_name, &data[0..(file_info.data_len as usize)]).unwrap();
         data.drain(0..(file_info.data_len as usize));
 
         // break when all files finished
-        if data.len() == 0 {
+        if data.is_empty() {
             break;
         }
     }
 }
 
-fn archive(file_names: Vec<String>, output_file: &str, compress: bool) {
+fn archive(mut file_names: Vec<String>, output_file: &str, compress: bool) {
     let mut files = vec![];
+    
+    for file in file_names.clone() {
+        // check if path is folder
+        if fs::metadata(&file).unwrap().is_dir() {
+            
+            for entry in WalkDir::new(&file).into_iter().filter_map(|e| e.ok()) {
+                let path = entry.path().display().to_string();
+                if fs::metadata(&path).unwrap().is_file() {
+                    file_names.push(path);
+                }
+            }
+        }
+    }
 
-    for file_name in file_names {
+    for file_name in file_names.into_iter().filter(|x| {fs::metadata(x).unwrap().is_file()}) {
+        println!("{}", file_name);
         let data = fs::read(&file_name).unwrap();
 
         let info = FileInfo {
-            file_name: file_name,
+            file_name,
             data_len: data.len() as u64,
         };
 
         files.push(File {
-            info: info,
-            data: data,
+            info,
+            data,
         });
     }
 
@@ -117,7 +133,6 @@ fn archive(file_names: Vec<String>, output_file: &str, compress: bool) {
     } else {
         output.push(0);
     }
-
 
     fs::write(output_file, output).unwrap();
 }
