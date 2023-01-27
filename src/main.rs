@@ -29,6 +29,7 @@ struct Args {
 struct FileInfo {
     file_name: String,
     data_len: u64,
+    hash: u32, // crc32
 }
 
 struct File {
@@ -66,10 +67,24 @@ fn extract(archive_file: &str) {
         let file_info: FileInfo = deserialize(file_info).unwrap();
         data.drain(0..len);
 
+        // create parent dirs for file
         let path = std::path::Path::new(&file_info.file_name);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        // get data and write to file
-        fs::write(file_info.file_name, &data[0..(file_info.data_len as usize)]).unwrap();
+
+        // get data
+        let file_data = &data[0..(file_info.data_len as usize)];
+
+        // check hashes
+        let hash = crc32fast::hash(file_data);
+        if hash != file_info.hash {
+            eprintln!(
+                "Warning: {} may be corrupted hashes {} - data and {} - info do not match",
+                file_info.file_name, hash, file_info.hash
+            );
+        }
+
+        // write to file
+        fs::write(file_info.file_name, file_data).unwrap();
         data.drain(0..(file_info.data_len as usize));
 
         // break when all files finished
@@ -80,12 +95,10 @@ fn extract(archive_file: &str) {
 }
 
 fn archive(mut file_names: Vec<String>, output_file: &str, compress: bool) {
-    let mut files = vec![];
-    
+    // expand folders to file names of all in folder
     for file in file_names.clone() {
         // check if path is folder
         if fs::metadata(&file).unwrap().is_dir() {
-            
             for entry in WalkDir::new(&file).into_iter().filter_map(|e| e.ok()) {
                 let path = entry.path().display().to_string();
                 if fs::metadata(&path).unwrap().is_file() {
@@ -95,19 +108,22 @@ fn archive(mut file_names: Vec<String>, output_file: &str, compress: bool) {
         }
     }
 
-    for file_name in file_names.into_iter().filter(|x| {fs::metadata(x).unwrap().is_file()}) {
-        println!("{}", file_name);
+    // create vec of files (data and info)
+    let mut files = vec![];
+
+    for file_name in file_names
+        .into_iter()
+        .filter(|x| fs::metadata(x).unwrap().is_file())
+    {
         let data = fs::read(&file_name).unwrap();
 
         let info = FileInfo {
             file_name,
             data_len: data.len() as u64,
+            hash: crc32fast::hash(&data),
         };
 
-        files.push(File {
-            info,
-            data,
-        });
+        files.push(File { info, data });
     }
 
     // output file buffer
