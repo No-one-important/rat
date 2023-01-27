@@ -1,0 +1,7 @@
+// file
+u64 info len
+info (file_name, len, hash) // encoded with bincode
+data &[u8] // len from info
+
+repeat file for each file
+compressed u8 // 1 for compressed 0 for not (not included in compression(lz4))
